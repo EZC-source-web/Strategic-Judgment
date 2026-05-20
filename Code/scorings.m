@@ -1,0 +1,10 @@
+
+function [crps]=scorings(fore,activate)
+activate = [0 1];
+[f,xi] = ksdensity(fore(h,:),'kernel','epanechnikov','function','cdf');
+cdf = f(:,50); % fix cdf at the 50th obs
+if activate == 1
+    crps = (cdf-indicat(yhat,thresh)).^2;
+else
+    crps = 0; 
+end
