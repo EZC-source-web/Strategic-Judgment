@@ -1,33 +1,56 @@
 # OS / editor
 .DS_Store
+._*
 Thumbs.db
+Desktop.ini
 
-# MATLAB
+# MATLAB temporary and generated files
 *.asv
-*.m~
 *.autosave
+*.m~
+*.mat
 *.mex*
+*.mlx.autosave
+*.slxc
+*.tmp
 slprj/
+codegen/
 
-# Outputs
-out/
-output/
-exhibits/
-figures/
+# Raw and intermediate data: never commit data files
+/data/**
+!/data/
+!/data/raw/
+!/data/raw/README_data.md
+/Data_row/
 
-# Data (never commit raw data)
-data/raw/
-data/interim/
-data/processed/
+# Generated outputs
+/out/
+/output/
+/logs/
+/figures/
+/figure/
+/tables/
+/table/
+/exhibits/
 
-# LaTeX build
+# LaTeX build artifacts
 *.aux
 *.bbl
+*.bcf
 *.blg
-*.log
-*.out
-*.toc
-*.lof
-*.lot
-*.fls
 *.fdb_latexmk
+*.fls
+*.lof
+*.log
+*.lot
+*.nav
+*.out
+*.run.xml
+*.snm
+*.synctex.gz
+*.toc
+*.vrb
+
+# Large paper binaries should be kept outside git unless intentionally curated
+/paper/*.pdf
+/paper/*.synctex.gz
