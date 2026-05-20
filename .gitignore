@@ -1,0 +1,33 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# MATLAB
+*.asv
+*.m~
+*.autosave
+*.mex*
+slprj/
+
+# Outputs
+out/
+output/
+exhibits/
+figures/
+
+# Data (never commit raw data)
+data/raw/
+data/interim/
+data/processed/
+
+# LaTeX build
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
