@@ -46,26 +46,50 @@ prob_norm(ok, :) = bsxfun(@rdivide, prob(ok, :), row_sum(ok));
 
 pit = NaN(numel(y), 1);
 cum_prob = [zeros(size(prob_norm, 1), 1), cumsum(prob_norm, 2)];
+snapped_count = 0;
+still_missing_count = 0;
 
 for t = 1:numel(y)
     if ~ok(t) || ~isfinite(y(t))
         continue;
     end
 
-    idx = find(y(t) >= lower & y(t) < upper, 1, 'first');
-    if isempty(idx) && y(t) == upper(end)
-        idx = numel(upper);
-    end
+    y_eval = y(t);
+    idx = find_bin_index(y_eval, lower, upper);
 
     if isempty(idx)
-        warning('pit_from_hist:RealizationOutsideBins', ...
-            ['Realization at row %d is outside histogram support or falls ' ...
-            'in a bin gap; returning NaN.'], t);
-        continue;
+        y_snapped = snap_realized_to_bin_grid(y_eval, endpoints);
+        idx = find_bin_index(y_snapped, lower, upper);
+        if ~isempty(idx)
+            y_eval = y_snapped;
+            snapped_count = snapped_count + 1;
+        else
+            still_missing_count = still_missing_count + 1;
+            continue;
+        end
     end
 
-    frac = (y(t) - lower(idx)) / width(idx);
+    y_eval = min(max(y_eval, lower(idx)), upper(idx));
+    frac = (y_eval - lower(idx)) / width(idx);
     pit(t) = cum_prob(t, idx) + frac * prob_norm(t, idx);
     pit(t) = min(max(pit(t), 0), 1);
+end
+
+if snapped_count > 0
+    warning('pit_from_hist:SnappedRealizations', ...
+        'Snapped %d realizations to the implied histogram bin grid.', snapped_count);
+end
+if still_missing_count > 0
+    warning('pit_from_hist:RealizationOutsideBins', ...
+        ['%d realizations remained outside histogram support or in bin gaps ' ...
+        'after snapping; returned NaN.'], still_missing_count);
+end
+end
+
+function idx = find_bin_index(y, lower, upper)
+tol = 1e-8;
+idx = find(y >= lower - tol & (y < upper | abs(y - upper) <= tol), 1, 'first');
+if isempty(idx) && y == upper(end)
+    idx = numel(upper);
 end
 end

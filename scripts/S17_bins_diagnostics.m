@@ -35,12 +35,18 @@ for i = 1:numel(diag.series)
             datestr(min(s.dates), 'yyyy-mm-dd'), datestr(max(s.dates), 'yyyy-mm-dd'));
     end
     lines{end + 1} = sprintf(['  %s h%s | %s | median_gap=%.12g | max_gap=%.12g | ' ...
-        'dates_gap_gt_tol=%d | nonmonotone_dates=%d | realized_in_gap=%d'], ...
+        'dates_gap_gt_tol=%d | nonmonotone_dates=%d | ' ...
+        'realized_in_gap_raw=%d | realized_in_gap_snapped=%d'], ...
         s.name, num2str(s.horizon), date_range, s.median_gap, s.max_gap, ...
-        s.dates_with_gap_count, s.nonmonotone_count, s.realized_in_gap_count); %#ok<AGROW>
-    if s.realized_in_gap_count > 0
-        lines{end + 1} = sprintf('    realized_in_gap_dates: %s', ...
-            join_dates(s.realized_in_gap_dates)); %#ok<AGROW>
+        s.dates_with_gap_count, s.nonmonotone_count, ...
+        s.realized_in_gap_raw_count, s.realized_in_gap_snapped_count); %#ok<AGROW>
+    if s.realized_in_gap_raw_count > 0
+        lines{end + 1} = sprintf('    realized_in_gap_raw_dates: %s', ...
+            join_dates(s.realized_in_gap_raw_dates)); %#ok<AGROW>
+    end
+    if s.realized_in_gap_snapped_count > 0
+        lines{end + 1} = sprintf('    realized_in_gap_snapped_dates: %s', ...
+            join_dates(s.realized_in_gap_snapped_dates)); %#ok<AGROW>
     end
 end
 
@@ -68,10 +74,11 @@ end
 
 function zip_file = create_bins_bundle(cfg)
 timestamp = datestr(now, 'yyyymmdd_HHMMSS');
-zip_file = fullfile(cfg.bundles, ['SPF_BINS_BUNDLE_', timestamp, '.zip']);
+zip_file = fullfile(cfg.bundles, ['SPF_BINS_BUNDLE2_', timestamp, '.zip']);
 
 files = {
     fullfile('out', 'logs', 'bins_diagnostics_log.txt')
+    fullfile('src', 'utils', 'snap_realized_to_bin_grid.m')
     fullfile('src', 'utils', 'sanitize_hist_bins.m')
     fullfile('src', 'utils', 'pit_from_hist.m')
     fullfile('src', 'scoring_rules', 'logscore_from_hist.m')

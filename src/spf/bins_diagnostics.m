@@ -31,13 +31,19 @@ for j = 1:numel(spf_aggR.series)
     max_gaps = NaN(n_dates, 1);
     gap_dates = false(n_dates, 1);
     nonmonotone_dates = false(n_dates, 1);
-    realized_in_gap = false(n_dates, 1);
+    realized_in_gap_raw = false(n_dates, 1);
+    realized_in_gap_snapped = false(n_dates, 1);
 
     for t = 1:n_dates
         endpoints = get_endpoints(s.bin_edges_by_date{t});
         [max_gaps(t), gap_dates(t), nonmonotone_dates(t)] = gap_stats(endpoints);
         if isfield(s, 'realized_by_date') && numel(s.realized_by_date) >= t
-            realized_in_gap(t) = value_in_gap(get_realized_value(s.realized_by_date, t), endpoints);
+            y_raw = get_realized_value(s.realized_by_date, t);
+            realized_in_gap_raw(t) = value_in_gap(y_raw, endpoints);
+            if realized_in_gap_raw(t)
+                y_snapped = snap_realized_to_bin_grid(y_raw, endpoints);
+                realized_in_gap_snapped(t) = value_in_gap(y_snapped, endpoints);
+            end
         end
     end
 
@@ -59,8 +65,12 @@ for j = 1:numel(spf_aggR.series)
         'max_gap', max_gap, ...
         'dates_with_gap_count', sum(gap_dates), ...
         'nonmonotone_count', sum(nonmonotone_dates), ...
-        'realized_in_gap_count', sum(realized_in_gap), ...
-        'realized_in_gap_dates', s.dates(realized_in_gap));
+        'realized_in_gap_raw_count', sum(realized_in_gap_raw), ...
+        'realized_in_gap_snapped_count', sum(realized_in_gap_snapped), ...
+        'realized_in_gap_raw_dates', s.dates(realized_in_gap_raw), ...
+        'realized_in_gap_snapped_dates', s.dates(realized_in_gap_snapped), ...
+        'realized_in_gap_count', sum(realized_in_gap_snapped), ...
+        'realized_in_gap_dates', s.dates(realized_in_gap_snapped));
 end
 
 diag = struct();
@@ -76,6 +86,8 @@ function out = empty_series_diag()
 out = struct('name', {}, 'horizon', {}, 'dates', {}, ...
     'max_gap_by_date', {}, 'median_gap', {}, 'max_gap', {}, ...
     'dates_with_gap_count', {}, 'nonmonotone_count', {}, ...
+    'realized_in_gap_raw_count', {}, 'realized_in_gap_snapped_count', {}, ...
+    'realized_in_gap_raw_dates', {}, 'realized_in_gap_snapped_dates', {}, ...
     'realized_in_gap_count', {}, 'realized_in_gap_dates', {});
 end
 
@@ -132,9 +144,10 @@ if ~isfinite(y) || isempty(endpoints) || size(endpoints, 1) < 2
 end
 lower = endpoints(:, 1);
 upper = endpoints(:, 2);
+tol = 1e-8;
 for i = 1:(numel(upper) - 1)
     if isfinite(upper(i)) && isfinite(lower(i + 1)) && lower(i + 1) > upper(i)
-        if y > upper(i) && y < lower(i + 1)
+        if y > upper(i) + tol && y < lower(i + 1) - tol
             tf = true;
             return;
         end

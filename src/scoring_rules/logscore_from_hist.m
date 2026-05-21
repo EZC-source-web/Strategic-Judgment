@@ -61,24 +61,49 @@ prob_norm(ok, :) = bsxfun(@rdivide, prob(ok, :), row_sum(ok));
 
 density = bsxfun(@rdivide, prob_norm, width(:)');
 density_at_y = NaN(numel(y), 1);
+snapped_count = 0;
+still_missing_count = 0;
 
 for t = 1:numel(y)
     if ~isfinite(y(t)) || ~ok(t)
         density_at_y(t) = NaN;
         continue;
     end
-    idx = find(y(t) >= lower & y(t) < upper, 1, 'first');
-    if isempty(idx) && y(t) == upper(end)
-        idx = numel(upper);
+    y_eval = y(t);
+    idx = find_bin_index(y_eval, lower, upper);
+    if isempty(idx)
+        y_snapped = snap_realized_to_bin_grid(y_eval, endpoints);
+        idx = find_bin_index(y_snapped, lower, upper);
+        if ~isempty(idx)
+            y_eval = y_snapped; %#ok<NASGU>
+            snapped_count = snapped_count + 1;
+        else
+            still_missing_count = still_missing_count + 1;
+        end
     end
+
     if ~isempty(idx)
         density_at_y(t) = max(density(t, idx), min_density);
-    else
-        warning('logscore_from_hist:RealizationOutsideBins', ...
-            ['Realization at row %d is outside histogram support or falls ' ...
-            'in a bin gap; returning NaN.'], t);
     end
 end
 
+if snapped_count > 0
+    warning('logscore_from_hist:SnappedRealizations', ...
+        'Snapped %d realizations to the implied histogram bin grid.', snapped_count);
+end
+if still_missing_count > 0
+    warning('logscore_from_hist:RealizationOutsideBins', ...
+        ['%d realizations remained outside histogram support or in bin gaps ' ...
+        'after snapping; returned NaN.'], still_missing_count);
+end
+
 log_score = log(density_at_y);
+end
+
+function idx = find_bin_index(y, lower, upper)
+tol = 1e-8;
+idx = find(y >= lower - tol & (y < upper | abs(y - upper) <= tol), 1, 'first');
+if isempty(idx) && y == upper(end)
+    idx = numel(upper);
+end
 end
