@@ -52,24 +52,30 @@ for i = 1:numel(raw_files)
 
     try
         tables = read_raw_tables(file, ext);
-        file_count = 0;
         for j = 1:numel(tables)
             tbl = tables(j).table;
             if isempty(tbl) || height(tbl) == 0
+                parsed_files(end + 1) = struct( ... %#ok<AGROW>
+                    'path', file, 'format', ext, 'sheet', tables(j).sheet, ...
+                    'series_count', 0, 'status', 'empty', 'message', 'empty table');
                 continue;
             end
 
             [new_series, new_warnings] = parse_table_series(tbl, file, tables(j).sheet);
             warnings = [warnings, new_warnings]; %#ok<AGROW>
+            sheet_status = 'ok';
+            sheet_message = '';
             if ~isempty(new_series)
                 series = append_series(series, new_series);
-                file_count = file_count + numel(new_series);
+            else
+                sheet_status = 'skip';
+                sheet_message = 'no density series detected';
             end
+            parsed_files(end + 1) = struct( ... %#ok<AGROW>
+                'path', file, 'format', ext, 'sheet', tables(j).sheet, ...
+                'series_count', numel(new_series), 'status', sheet_status, ...
+                'message', sheet_message);
         end
-
-        parsed_files(end + 1) = struct( ... %#ok<AGROW>
-            'path', file, 'format', ext, 'sheet', '', ...
-            'series_count', file_count, 'status', 'ok', 'message', '');
     catch ME
         warnings{end + 1} = sprintf('%s: %s', file, ME.message); %#ok<AGROW>
         parsed_files(end + 1) = struct( ... %#ok<AGROW>
@@ -216,6 +222,11 @@ if all(isnat(dates_all))
     return;
 end
 
+if is_long_format(roles)
+    [series, warnings] = parse_long_table_series(tbl, file, sheet, roles, dates_all);
+    return;
+end
+
 group_cols = {};
 for c = {'name', 'horizon', 'forecaster_id', 'vintage'}
     role_name = c{1};
@@ -309,6 +320,208 @@ for g = 1:numel(groups)
 end
 end
 
+function tf = is_long_format(roles)
+tf = numel(roles.prob) == 1 && ~isempty(roles.bin_lower) && ~isempty(roles.bin_upper);
+end
+
+function [series, warnings] = parse_long_table_series(tbl, file, sheet, roles, dates_all)
+warnings = {};
+series = empty_series();
+
+lower_all = numeric_column(tbl.(roles.bin_lower));
+upper_all = numeric_column(tbl.(roles.bin_upper));
+prob_all = numeric_column(tbl.(roles.prob{1}));
+
+valid_bins = isfinite(lower_all) & isfinite(upper_all) & lower_all < upper_all;
+if ~any(valid_bins)
+    warnings{end + 1} = sprintf('%s:%s long format detected, but bin endpoints could not be inferred.', ...
+        file, sheet);
+    return;
+end
+if any(~valid_bins)
+    warnings{end + 1} = sprintf('%s:%s dropped %d long-format rows with invalid bin endpoints.', ...
+        file, sheet, sum(~valid_bins));
+end
+
+tbl = tbl(valid_bins, :);
+dates_all = dates_all(valid_bins);
+lower_all = lower_all(valid_bins);
+upper_all = upper_all(valid_bins);
+prob_all = prob_all(valid_bins);
+
+group_cols = {};
+for c = {'name', 'horizon', 'forecaster_id'}
+    role_name = c{1};
+    if ~isempty(roles.(role_name))
+        group_cols{end + 1} = roles.(role_name); %#ok<AGROW>
+    end
+end
+
+groups = table_groups(tbl, group_cols);
+for g = 1:numel(groups)
+    idx = groups(g).idx;
+    sub = tbl(idx, :);
+    dates = dates_all(idx);
+    lower = lower_all(idx);
+    upper = upper_all(idx);
+    prob_long = prob_all(idx);
+
+    [bin_edges, bin_key, bin_warnings] = long_bin_edges(lower, upper, file, sheet);
+    warnings = [warnings, bin_warnings]; %#ok<AGROW>
+    if isempty(bin_edges)
+        continue;
+    end
+
+    if ~isempty(roles.vintage)
+        vintage_all = parse_dates(sub.(roles.vintage));
+    else
+        vintage_all = NaT(height(sub), 1);
+    end
+
+    forecast_keys = strings(height(sub), 1);
+    for i = 1:height(sub)
+        forecast_keys(i) = datetime_key(dates(i)) + "|" + datetime_key(vintage_all(i));
+    end
+    [unique_keys, first_idx, forecast_idx] = unique(forecast_keys, 'stable'); %#ok<ASGLU>
+
+    n_forecasts = numel(first_idx);
+    k_bins = size(bin_key, 1);
+    prob = NaN(n_forecasts, k_bins);
+    realized = NaN(n_forecasts, 1);
+    out_dates = dates(first_idx);
+    out_vintage = vintage_all(first_idx);
+
+    if ~isempty(roles.realized)
+        realized_all = numeric_column(sub.(roles.realized));
+    else
+        realized_all = NaN(height(sub), 1);
+    end
+
+    for i = 1:height(sub)
+        row = forecast_idx(i);
+        bin = find(abs(bin_key(:, 1) - lower(i)) < 1e-12 & ...
+            abs(bin_key(:, 2) - upper(i)) < 1e-12, 1, 'first');
+        if isempty(bin)
+            warnings{end + 1} = sprintf('%s:%s long-format row could not be assigned to a bin.', ...
+                file, sheet); %#ok<AGROW>
+            continue;
+        end
+        if isnan(prob(row, bin))
+            prob(row, bin) = prob_long(i);
+        else
+            prob(row, bin) = prob(row, bin) + prob_long(i);
+            warnings{end + 1} = sprintf('%s:%s duplicate long-format bin rows were summed.', ...
+                file, sheet); %#ok<AGROW>
+        end
+        if isnan(realized(row)) && isfinite(realized_all(i))
+            realized(row) = realized_all(i);
+        end
+    end
+    prob(isnan(prob)) = 0;
+
+    if ~isempty(roles.name)
+        name = first_string(sub.(roles.name));
+    else
+        name = infer_name_from_file(file);
+    end
+    if isempty(name)
+        name = 'UNKNOWN';
+    end
+
+    if ~isempty(roles.horizon)
+        horizon = first_numeric(sub.(roles.horizon));
+    else
+        horizon = infer_horizon_from_text(file);
+    end
+
+    [prob, normalize_warnings] = validate_prob(prob, file, sheet, name, horizon);
+    warnings = [warnings, normalize_warnings]; %#ok<AGROW>
+
+    [ok_bins, bin_msg] = validate_bins(bin_edges);
+    if ~ok_bins
+        warnings{end + 1} = sprintf('%s:%s invalid long-format bins for %s h%s: %s', ...
+            file, sheet, name, num2str(horizon), bin_msg);
+        continue;
+    end
+
+    [out_dates, order] = sort(out_dates);
+    prob = prob(order, :);
+    realized = realized(order);
+    out_vintage = out_vintage(order);
+
+    [out_dates, unique_idx] = unique(out_dates, 'stable');
+    if numel(unique_idx) < numel(order)
+        warnings{end + 1} = sprintf('%s:%s duplicate forecast dates collapsed for %s h%s.', ...
+            file, sheet, name, num2str(horizon));
+    end
+    prob = prob(unique_idx, :);
+    realized = realized(unique_idx);
+    out_vintage = out_vintage(unique_idx);
+
+    if ~issorted(out_dates)
+        warnings{end + 1} = sprintf('%s:%s dates could not be sorted for %s.', ...
+            file, sheet, name);
+        continue;
+    end
+
+    forecaster_id = '';
+    if ~isempty(roles.forecaster_id)
+        forecaster_id = first_string(sub.(roles.forecaster_id));
+    end
+
+    series(end + 1) = struct( ... %#ok<AGROW>
+        'name', char(name), ...
+        'horizon', horizon, ...
+        'dates', out_dates(:), ...
+        'bin_edges', bin_edges, ...
+        'prob', prob, ...
+        'realized', realized(:), ...
+        'forecaster_id', char(forecaster_id), ...
+        'vintage', out_vintage(:), ...
+        'source_file', file, ...
+        'source_sheet', sheet);
+end
+end
+
+function [bin_edges, bin_key, warnings] = long_bin_edges(lower, upper, file, sheet)
+warnings = {};
+pairs = unique([lower(:), upper(:)], 'rows');
+[~, order] = sort(pairs(:, 1));
+pairs = pairs(order, :);
+
+if isempty(pairs) || any(~isfinite(pairs(:))) || any(pairs(:, 1) >= pairs(:, 2))
+    bin_edges = [];
+    bin_key = [];
+    warnings{end + 1} = sprintf('%s:%s long-format bin edges could not be inferred.', file, sheet);
+    return;
+end
+
+if size(pairs, 1) > 1 && any(pairs(2:end, 1) < pairs(1:(end - 1), 2))
+    bin_edges = [];
+    bin_key = [];
+    warnings{end + 1} = sprintf('%s:%s long-format bin endpoints overlap.', file, sheet);
+    return;
+end
+
+contiguous = size(pairs, 1) == 1 || all(abs(pairs(1:(end - 1), 2) - pairs(2:end, 1)) < 1e-12);
+if contiguous
+    bin_edges = [pairs(:, 1); pairs(end, 2)];
+else
+    bin_edges = pairs;
+    warnings{end + 1} = sprintf('%s:%s long-format bins are not contiguous; storing K-by-2 endpoints.', ...
+        file, sheet);
+end
+bin_key = pairs;
+end
+
+function key = datetime_key(dt)
+if isnat(dt)
+    key = "NaT";
+else
+    key = string(datestr(dt, 'yyyymmdd'));
+end
+end
+
 function tbl = normalize_table(tbl)
 tbl.Properties.VariableNames = matlab.lang.makeUniqueStrings( ...
     matlab.lang.makeValidName(tbl.Properties.VariableNames));
@@ -332,9 +545,11 @@ roles.horizon = first_match(vars, lower_vars, {'horizon', 'h', 'forecast_horizon
 roles.realized = first_match(vars, lower_vars, {'realized', 'realised', 'actual', 'realization', 'realisation', 'outturn'});
 roles.forecaster_id = first_match(vars, lower_vars, {'forecaster', 'forecaster_id', 'id', 'respondent', 'panelist'});
 roles.vintage = first_match(vars, lower_vars, {'vintage', 'vintagedate', 'release', 'realtime'});
+roles.bin_lower = first_match(vars, lower_vars, {'bin_lower', 'binlow', 'bin_low', 'lower', 'lowerbound', 'lower_bound', 'left', 'from'});
+roles.bin_upper = first_match(vars, lower_vars, {'bin_upper', 'binupper', 'bin_high', 'binhigh', 'upper', 'upperbound', 'upper_bound', 'right', 'to'});
 
 reserved = {roles.date, roles.name, roles.horizon, roles.realized, ...
-    roles.forecaster_id, roles.vintage};
+    roles.forecaster_id, roles.vintage, roles.bin_lower, roles.bin_upper};
 roles.prob = detect_probability_columns(vars, lower_vars, reserved);
 end
 

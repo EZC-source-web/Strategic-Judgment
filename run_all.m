@@ -17,6 +17,7 @@ ensure_dir(cfg.cache);
 ensure_dir(cfg.logs);
 ensure_dir(cfg.figures);
 ensure_dir(cfg.tables);
+ensure_dir(cfg.bundles);
 
 steps = {
     'S00_smoke_test'

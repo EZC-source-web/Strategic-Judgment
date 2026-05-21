@@ -17,6 +17,7 @@ cfg.cache = fullfile(cfg.out, 'cache');
 cfg.logs = fullfile(cfg.out, 'logs');
 cfg.figures = fullfile(cfg.out, 'figures');
 cfg.tables = fullfile(cfg.out, 'tables');
+cfg.bundles = fullfile(cfg.out, 'bundles');
 
 cfg.paper = fullfile(root, 'paper');
 cfg.tests = fullfile(root, 'tests');
