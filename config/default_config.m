@@ -34,6 +34,7 @@ else
     cfg.spf.raw_dir = expand_user_path(env_spf_raw_dir);
 end
 cfg.spf.standardized_file = fullfile(cfg.cache, 'spf_densities.mat');
+cfg.spf.aggregate_file = fullfile(cfg.cache, 'spf_aggregate.mat');
 
 cfg.benchmarks = struct();
 cfg.benchmarks.cache_file = fullfile(cfg.cache, 'benchmark_forecasts.mat');
