@@ -19,6 +19,7 @@ write_text_file(fullfile(cfg.logs, 'spf_parser_log.txt'), spf_parser_log_text(sp
 pretty_print(sprintf('Saved SPF cache: %s', cfg.spf.standardized_file), 'info');
 zip_file = create_spf_bundle(cfg);
 pretty_print(sprintf('Created SPF parser bundle: %s', zip_file), 'info');
+mirror_spf_bundle(zip_file, cfg);
 end
 
 function print_spf_summary(summary_text, spf)
@@ -149,4 +150,29 @@ cleanup = onCleanup(@() cd(original_dir));
 cd(cfg.root);
 zip(zip_file, existing);
 delete(cleanup);
+end
+
+function mirror_spf_bundle(zip_file, cfg)
+if ~isfield(cfg, 'bundle_mirror_dirs') || isempty(cfg.bundle_mirror_dirs)
+    return;
+end
+
+for i = 1:numel(cfg.bundle_mirror_dirs)
+    target_dir = cfg.bundle_mirror_dirs{i};
+    if exist(target_dir, 'dir') ~= 7
+        continue;
+    end
+    target_file = fullfile(target_dir, get_filename(zip_file));
+    [ok, msg] = copyfile(zip_file, target_file, 'f');
+    if ok
+        pretty_print(sprintf('Copied SPF parser bundle to Dropbox review folder: %s', target_file), 'info');
+    else
+        pretty_print(sprintf('Could not copy SPF parser bundle to %s: %s', target_dir, msg), 'warn');
+    end
+end
+end
+
+function name = get_filename(pathname)
+[~, base, ext] = fileparts(pathname);
+name = [base, ext];
 end
