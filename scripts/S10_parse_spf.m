@@ -16,6 +16,7 @@ write_text_file(fullfile(cfg.logs, 'spf_summary.txt'), summary_text);
 write_text_file(fullfile(cfg.logs, 'spf_parser_log.txt'), spf_parser_log_text(spf));
 
 if strcmp(spf.meta.status, 'ok')
+    remove_stale_cache(fullfile(cfg.logs, 'NEEDED_FROM_USER.txt'));
     save_mat(cfg.spf.standardized_file, 'spf', spf);
     pretty_print(sprintf('Saved SPF cache: %s', cfg.spf.standardized_file), 'info');
 else

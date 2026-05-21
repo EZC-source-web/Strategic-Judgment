@@ -223,6 +223,13 @@ tbl = normalize_table(tbl);
 vars = tbl.Properties.VariableNames;
 roles = detect_roles(vars);
 
+[philly_series, philly_warnings, handled] = parse_philly_probability_series(tbl, file, sheet);
+if handled
+    series = philly_series;
+    warnings = [warnings, philly_warnings];
+    return;
+end
+
 if isempty(roles.date) || isempty(roles.prob)
     return;
 end
@@ -494,6 +501,238 @@ for g = 1:numel(groups)
 end
 end
 
+function [series, warnings, handled] = parse_philly_probability_series(tbl, file, sheet)
+%PARSE_PHILLY_PROBABILITY_SERIES Handle Philadelphia Fed Individual_PR*.xlsx files.
+
+warnings = {};
+series = empty_series();
+handled = false;
+
+vars = tbl.Properties.VariableNames;
+lower_vars = lower(vars);
+year_col = first_exact_match(vars, lower_vars, 'year');
+quarter_col = first_exact_match(vars, lower_vars, 'quarter');
+id_col = first_exact_match(vars, lower_vars, 'id');
+if isempty(year_col) || isempty(quarter_col)
+    return;
+end
+
+roots = {'PRGDP', 'PRPGDP', 'PRUNEMP'};
+root_cols = struct();
+has_root = false;
+for r = 1:numel(roots)
+    root = roots{r};
+    [cols, nums] = philly_probability_columns(vars, root);
+    root_cols.(root).cols = cols;
+    root_cols.(root).nums = nums;
+    has_root = has_root || ~isempty(cols);
+end
+if ~has_root
+    return;
+end
+handled = true;
+
+years = numeric_column(tbl.(year_col));
+quarters = numeric_column(tbl.(quarter_col));
+valid_dates = isfinite(years) & isfinite(quarters) & quarters >= 1 & quarters <= 4;
+if ~any(valid_dates)
+    warnings{end + 1} = sprintf('%s:%s has YEAR/QUARTER columns, but no valid survey dates.', file, sheet);
+    return;
+end
+
+dates_all = NaT(size(years));
+dates_all(valid_dates) = datetime(years(valid_dates), (quarters(valid_dates) - 1) * 3 + 1, 1);
+
+if isempty(id_col)
+    id_keys = strings(height(tbl), 1);
+else
+    id_keys = string(tbl.(id_col));
+end
+
+for r = 1:numel(roots)
+    root = roots{r};
+    cols = root_cols.(root).cols;
+    nums = root_cols.(root).nums;
+    if isempty(cols)
+        continue;
+    end
+
+    prob_all = table_to_matrix(tbl, cols);
+    regimes = philly_probability_regimes(root);
+    for rg = 1:numel(regimes)
+        regime = regimes(rg);
+        row_mask = valid_dates & dates_all >= regime.start_date & dates_all <= regime.end_date;
+        if ~any(row_mask)
+            continue;
+        end
+
+        ids = unique(id_keys(row_mask), 'stable');
+        for id_idx = 1:numel(ids)
+            id_mask = row_mask & id_keys == ids(id_idx);
+            for horizon = 0:(regime.n_horizons - 1)
+                doc_nums = horizon .* regime.k_bins + (1:regime.k_bins);
+                col_idx = NaN(1, regime.k_bins);
+                for k = 1:regime.k_bins
+                    hit = find(nums == doc_nums(k), 1, 'first');
+                    if ~isempty(hit)
+                        col_idx(k) = hit;
+                    end
+                end
+                if any(isnan(col_idx))
+                    warnings{end + 1} = sprintf('%s:%s missing %s columns for %s horizon %d.', ...
+                        file, sheet, mat2str(doc_nums(isnan(col_idx))), root, horizon); %#ok<AGROW>
+                    continue;
+                end
+
+                row_idx = find(id_mask);
+                prob = prob_all(row_idx, col_idx);
+                row_sum = sum(prob, 2, 'omitnan');
+                keep = isfinite(row_sum) & row_sum > 0;
+                if ~any(keep)
+                    continue;
+                end
+                prob = prob(keep, :);
+                out_dates = dates_all(row_idx(keep));
+
+                order = regime.doc_to_ascending_order;
+                prob = prob(:, order);
+                bin_edges = regime.bin_edges;
+
+                [prob, normalize_warnings] = validate_prob(prob, file, sheet, root, horizon);
+                warnings = [warnings, normalize_warnings]; %#ok<AGROW>
+
+                [ok_bins, bin_msg] = validate_bins(bin_edges);
+                if ~ok_bins
+                    warnings{end + 1} = sprintf('%s:%s invalid official bins for %s h%d (%s): %s', ...
+                        file, sheet, root, horizon, regime.label, bin_msg); %#ok<AGROW>
+                    continue;
+                end
+
+                [out_dates, date_order] = sort(out_dates);
+                prob = prob(date_order, :);
+                [out_dates, unique_idx] = unique(out_dates, 'stable');
+                if numel(unique_idx) < size(prob, 1)
+                    warnings{end + 1} = sprintf('%s:%s duplicate survey dates collapsed for %s ID %s h%d.', ...
+                        file, sheet, root, char(ids(id_idx)), horizon); %#ok<AGROW>
+                end
+                prob = prob(unique_idx, :);
+
+                if ~issorted(out_dates)
+                    warnings{end + 1} = sprintf('%s:%s dates could not be sorted for %s ID %s h%d.', ...
+                        file, sheet, root, char(ids(id_idx)), horizon); %#ok<AGROW>
+                    continue;
+                end
+
+                series(end + 1) = struct( ... %#ok<AGROW>
+                    'name', root, ...
+                    'horizon', horizon, ...
+                    'dates', out_dates(:), ...
+                    'bin_edges', bin_edges, ...
+                    'prob', prob, ...
+                    'realized', NaN(numel(out_dates), 1), ...
+                    'forecaster_id', char(ids(id_idx)), ...
+                    'vintage', NaT(numel(out_dates), 1), ...
+                    'source_file', file, ...
+                    'source_sheet', sheet);
+            end
+        end
+    end
+
+    if isempty(series)
+        warnings{end + 1} = sprintf('%s:%s recognized %s columns but found no nonempty probability rows.', ...
+            file, sheet, root); %#ok<AGROW>
+    end
+end
+end
+
+function name = first_exact_match(vars, lower_vars, pattern)
+hit = strcmp(lower_vars, lower(pattern));
+if any(hit)
+    name = vars{find(hit, 1, 'first')};
+else
+    name = '';
+end
+end
+
+function [cols, nums] = philly_probability_columns(vars, root)
+cols = {};
+nums = [];
+pattern = ['^', root, '(\d+)$'];
+for i = 1:numel(vars)
+    token = regexp(upper(vars{i}), pattern, 'tokens', 'once');
+    if ~isempty(token)
+        cols{end + 1} = vars{i}; %#ok<AGROW>
+        nums(end + 1) = str2double(token{1}); %#ok<AGROW>
+    end
+end
+[nums, order] = sort(nums);
+cols = cols(order);
+end
+
+function regimes = philly_probability_regimes(root)
+switch root
+    case 'PRGDP'
+        regimes = [
+            make_regime('1968Q4_1973Q1', 1968, 4, 1973, 1, 15, 1, prpgdp_edges('1968Q4_1973Q1'))
+            make_regime('1973Q2_1974Q3', 1973, 2, 1974, 3, 15, 1, prpgdp_edges('1973Q2_1974Q3'))
+            make_regime('1974Q4_1981Q2', 1974, 4, 1981, 2, 15, 1, prpgdp_edges('1974Q4_1981Q2'))
+            make_regime('1981Q3_1991Q4', 1981, 3, 1991, 4, 6, 2, edges_ascending([6 Inf; 4 5.9; 2 3.9; 0 1.9; -2 -0.1; -Inf -2]))
+            make_regime('1992Q1_2009Q1', 1992, 1, 2009, 1, 10, 2, edges_ascending([6 Inf; 5 5.9; 4 4.9; 3 3.9; 2 2.9; 1 1.9; 0 0.9; -1 -0.1; -2 -1.1; -Inf -2]))
+            make_regime('2009Q2_2020Q1', 2009, 2, 2020, 1, 11, 4, edges_ascending([6 Inf; 5 5.9; 4 4.9; 3 3.9; 2 2.9; 1 1.9; 0 0.9; -1 -0.1; -2 -1.1; -3 -2.1; -Inf -3]))
+            make_regime('2020Q2_2024Q1', 2020, 2, 2024, 1, 11, 4, edges_ascending([16 Inf; 10 15.9; 7 9.9; 4 6.9; 2.5 3.9; 1.5 2.4; 0 1.4; -3 -0.1; -6 -3.1; -12 -6.1; -Inf -12]))
+            make_regime('2024Q2_present', 2024, 2, 9999, 4, 11, 4, edges_ascending([9 Inf; 7 8.9; 5.5 6.9; 4 5.4; 2.5 3.9; 1.5 2.4; 0 1.4; -1.5 -0.1; -3 -1.6; -5.1 -3.1; -Inf -5.1]))
+            ];
+    case 'PRPGDP'
+        regimes = [
+            make_regime('1968Q4_1973Q1', 1968, 4, 1973, 1, 15, 1, prpgdp_edges('1968Q4_1973Q1'))
+            make_regime('1973Q2_1974Q3', 1973, 2, 1974, 3, 15, 1, prpgdp_edges('1973Q2_1974Q3'))
+            make_regime('1974Q4_1981Q2', 1974, 4, 1981, 2, 15, 1, prpgdp_edges('1974Q4_1981Q2'))
+            make_regime('1981Q3_1985Q1', 1981, 3, 1985, 1, 6, 2, edges_ascending([12 Inf; 10 11.9; 8 9.9; 6 7.9; 4 5.9; -Inf 4]))
+            make_regime('1985Q2_1991Q4', 1985, 2, 1991, 4, 6, 2, edges_ascending([10 Inf; 8 9.9; 6 7.9; 4 5.9; 2 3.9; -Inf 2]))
+            make_regime('1992Q1_2013Q4', 1992, 1, 2013, 4, 10, 2, edges_ascending([8 Inf; 7 7.9; 6 6.9; 5 5.9; 4 4.9; 3 3.9; 2 2.9; 1 1.9; 0 0.9; -Inf 0]))
+            make_regime('2014Q1_present', 2014, 1, 9999, 4, 10, 2, edges_ascending([4 Inf; 3.5 3.9; 3 3.4; 2.5 2.9; 2 2.4; 1.5 1.9; 1 1.4; 0.5 0.9; 0 0.4; -Inf 0]))
+            ];
+    case 'PRUNEMP'
+        regimes = [
+            make_regime('2009Q2_2013Q4', 2009, 2, 2013, 4, 10, 4, edges_ascending([11 Inf; 10 10.9; 9.5 9.9; 9 9.4; 8.5 8.9; 8 8.4; 7.5 7.9; 7 7.4; 6 6.9; -Inf 6]))
+            make_regime('2014Q1_2020Q1', 2014, 1, 2020, 1, 10, 4, edges_ascending([9 Inf; 8 8.9; 7.5 7.9; 7 7.4; 6.5 6.9; 6 6.4; 5.5 5.9; 5 5.4; 4 4.9; -Inf 4]))
+            make_regime('2020Q2_2024Q1', 2020, 2, 2024, 1, 10, 4, edges_ascending([15 Inf; 12 14.9; 10 11.9; 8 9.9; 7 7.9; 6 6.9; 5 5.9; 4 4.9; 3 3.9; -Inf 3]))
+            make_regime('2024Q2_present', 2024, 2, 9999, 4, 10, 4, edges_ascending([9.9 Inf; 8.3 9.8; 7.2 8.2; 6.1 7.1; 5.5 6.0; 4.9 5.4; 4.3 4.8; 3.7 4.2; 3.1 3.6; -Inf 3.1]))
+            ];
+    otherwise
+        regimes = struct([]);
+end
+end
+
+function regime = make_regime(label, start_year, start_quarter, end_year, end_quarter, k_bins, n_horizons, bin_edges)
+regime = struct();
+regime.label = label;
+regime.start_date = datetime(start_year, (start_quarter - 1) * 3 + 1, 1);
+regime.end_date = datetime(end_year, (end_quarter - 1) * 3 + 1, 1);
+regime.k_bins = k_bins;
+regime.n_horizons = n_horizons;
+regime.bin_edges = bin_edges;
+regime.doc_to_ascending_order = k_bins:-1:1;
+end
+
+function edges = prpgdp_edges(label)
+switch label
+    case '1968Q4_1973Q1'
+        edges = edges_ascending([10 Inf; 9 9.9; 8 8.9; 7 7.9; 6 6.9; 5 5.9; 4 4.9; 3 3.9; 2 2.9; 1 1.9; 0 0.9; -1 -0.1; -2 -1.1; -3 -2.1; -Inf -3]);
+    case '1973Q2_1974Q3'
+        edges = edges_ascending([12 Inf; 11 11.9; 10 10.9; 9 9.9; 8 8.9; 7 7.9; 6 6.9; 5 5.9; 4 4.9; 3 3.9; 2 2.9; 1 1.9; 0 0.9; -1 -0.1; -Inf -1]);
+    case '1974Q4_1981Q2'
+        edges = edges_ascending([16 Inf; 15 15.9; 14 14.9; 13 13.9; 12 12.9; 11 11.9; 10 10.9; 9 9.9; 8 8.9; 7 7.9; 6 6.9; 5 5.9; 4 4.9; 3 3.9; -Inf 3]);
+    otherwise
+        edges = [];
+end
+end
+
+function edges = edges_ascending(descending_edges)
+[~, order] = sort(descending_edges(:, 1));
+edges = descending_edges(order, :);
+end
+
 function [bin_edges, bin_key, warnings] = long_bin_edges(lower, upper, file, sheet)
 warnings = {};
 pairs = unique([lower(:), upper(:)], 'rows');
@@ -729,9 +968,9 @@ ok = true;
 msg = '';
 if isvector(bin_edges)
     edges = bin_edges(:);
-    ok = numel(edges) >= 2 && all(isfinite(edges)) && all(diff(edges) > 0);
+    ok = numel(edges) >= 2 && all(~isnan(edges)) && all(diff(edges) > 0);
 else
-    ok = size(bin_edges, 2) == 2 && all(isfinite(bin_edges(:))) && ...
+    ok = size(bin_edges, 2) == 2 && all(~isnan(bin_edges(:))) && ...
         all(bin_edges(:, 1) < bin_edges(:, 2));
 end
 if ~ok
@@ -758,6 +997,10 @@ if any(needs_norm)
     warnings{end + 1} = sprintf('%s:%s %s h%s probability rows renormalized.', ...
         file, sheet, name, num2str(horizon));
 end
+
+final_sum = sum(prob, 2, 'omitnan');
+final_ok = isfinite(final_sum) & final_sum > 0;
+prob(final_ok, :) = bsxfun(@rdivide, prob(final_ok, :), final_sum(final_ok));
 end
 
 function tf = ismissing_compat(col)
