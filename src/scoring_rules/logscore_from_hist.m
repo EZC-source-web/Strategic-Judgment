@@ -21,12 +21,21 @@ end
 
 if isvector(bin_edges)
     edges = bin_edges(:);
-    lower = edges(1:(end - 1));
-    upper = edges(2:end);
+    endpoints = [edges(1:(end - 1)), edges(2:end)];
 else
-    lower = bin_edges(:, 1);
-    upper = bin_edges(:, 2);
+    endpoints = bin_edges(:, 1:2);
 end
+
+if any(isinf(endpoints(:)))
+    [endpoints, sanitize_info] = sanitize_hist_bins(endpoints);
+    for j = 1:numel(sanitize_info.messages)
+        warning('logscore_from_hist:SanitizedOpenBins', '%s', ...
+            sanitize_info.messages{j});
+    end
+end
+
+lower = endpoints(:, 1);
+upper = endpoints(:, 2);
 
 if size(prob, 2) ~= numel(lower)
     error('logscore_from_hist:DimensionMismatch', ...
@@ -45,13 +54,13 @@ if any(~isfinite(width)) || any(width <= 0)
         'Bins must be finite and strictly increasing.');
 end
 
-row_sum = sum(prob, 2);
+row_sum = sum(prob, 2, 'omitnan');
 ok = row_sum > 0 & isfinite(row_sum);
 prob_norm = prob;
 prob_norm(ok, :) = bsxfun(@rdivide, prob(ok, :), row_sum(ok));
 
 density = bsxfun(@rdivide, prob_norm, width(:)');
-density_at_y = min_density * ones(numel(y), 1);
+density_at_y = NaN(numel(y), 1);
 
 for t = 1:numel(y)
     if ~isfinite(y(t)) || ~ok(t)
@@ -64,6 +73,10 @@ for t = 1:numel(y)
     end
     if ~isempty(idx)
         density_at_y(t) = max(density(t, idx), min_density);
+    else
+        warning('logscore_from_hist:RealizationOutsideBins', ...
+            ['Realization at row %d is outside histogram support or falls ' ...
+            'in a bin gap; returning NaN.'], t);
     end
 end
 

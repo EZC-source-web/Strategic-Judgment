@@ -6,12 +6,21 @@ function pit = pit_from_hist(bin_edges, prob, y)
 
 if isvector(bin_edges)
     edges = bin_edges(:);
-    lower = edges(1:(end - 1));
-    upper = edges(2:end);
+    endpoints = [edges(1:(end - 1)), edges(2:end)];
 else
-    lower = bin_edges(:, 1);
-    upper = bin_edges(:, 2);
+    endpoints = bin_edges(:, 1:2);
 end
+
+if any(isinf(endpoints(:)))
+    [endpoints, sanitize_info] = sanitize_hist_bins(endpoints);
+    for j = 1:numel(sanitize_info.messages)
+        warning('pit_from_hist:SanitizedOpenBins', '%s', ...
+            sanitize_info.messages{j});
+    end
+end
+
+lower = endpoints(:, 1);
+upper = endpoints(:, 2);
 
 if size(prob, 2) ~= numel(lower)
     error('pit_from_hist:DimensionMismatch', ...
@@ -42,15 +51,21 @@ for t = 1:numel(y)
     if ~ok(t) || ~isfinite(y(t))
         continue;
     end
-    if y(t) <= lower(1)
-        pit(t) = 0;
-    elseif y(t) >= upper(end)
-        pit(t) = 1;
-    else
-        idx = find(y(t) >= lower & y(t) < upper, 1, 'first');
-        frac = (y(t) - lower(idx)) / width(idx);
-        pit(t) = cum_prob(t, idx) + frac * prob_norm(t, idx);
-        pit(t) = min(max(pit(t), 0), 1);
+
+    idx = find(y(t) >= lower & y(t) < upper, 1, 'first');
+    if isempty(idx) && y(t) == upper(end)
+        idx = numel(upper);
     end
+
+    if isempty(idx)
+        warning('pit_from_hist:RealizationOutsideBins', ...
+            ['Realization at row %d is outside histogram support or falls ' ...
+            'in a bin gap; returning NaN.'], t);
+        continue;
+    end
+
+    frac = (y(t) - lower(idx)) / width(idx);
+    pit(t) = cum_prob(t, idx) + frac * prob_norm(t, idx);
+    pit(t) = min(max(pit(t), 0), 1);
 end
 end
