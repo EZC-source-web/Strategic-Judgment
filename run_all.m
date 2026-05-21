@@ -23,6 +23,7 @@ steps = {
     'S00_smoke_test'
     'S10_parse_spf'
     'S15_aggregate_spf'
+    'S16_attach_realizations'
     'S20_build_benchmark'
     'S30_compute_scores_pit'
     'S40_run_ss_tests'
