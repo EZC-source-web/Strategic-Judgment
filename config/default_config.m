@@ -27,7 +27,12 @@ cfg.paper_title = 'The judgmental strategy of professional forecasters';
 cfg.matlab_min_version = '9.5'; % R2018b
 
 cfg.spf = struct();
-cfg.spf.raw_dir = fullfile(cfg.data_raw, 'spf');
+env_spf_raw_dir = getenv('SJ_SPF_RAW_DIR');
+if isempty(env_spf_raw_dir)
+    cfg.spf.raw_dir = fullfile(cfg.data_raw, 'spf');
+else
+    cfg.spf.raw_dir = expand_user_path(env_spf_raw_dir);
+end
 cfg.spf.standardized_file = fullfile(cfg.cache, 'spf_densities.mat');
 
 cfg.benchmarks = struct();
@@ -41,6 +46,25 @@ cfg.ss_tests.cache_file = fullfile(cfg.cache, 'ss_starx_tests.mat');
 cfg.ss_tests.default_lags = 2;
 cfg.ss_tests.default_delay = 1;
 cfg.ss_tests.include_const = true;
+end
+
+function path_out = expand_user_path(path_in)
+%EXPAND_USER_PATH Expand a leading ~ in environment-supplied paths.
+
+path_out = char(path_in);
+if startsWith(path_out, ['~', filesep]) || strcmp(path_out, '~')
+    home_dir = getenv('HOME');
+    if isempty(home_dir)
+        home_dir = getenv('USERPROFILE');
+    end
+    if ~isempty(home_dir)
+        if strcmp(path_out, '~')
+            path_out = home_dir;
+        else
+            path_out = fullfile(home_dir, path_out(3:end));
+        end
+    end
+end
 end
 
 function dirs = find_bundle_mirror_dirs()

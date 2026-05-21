@@ -12,14 +12,27 @@ ensure_dir(cfg.bundles);
 spf = parse_spf_densities(cfg.spf.raw_dir, cfg);
 summary_text = spf_summary_text(spf);
 print_spf_summary(summary_text, spf);
-save_mat(cfg.spf.standardized_file, 'spf', spf);
 write_text_file(fullfile(cfg.logs, 'spf_summary.txt'), summary_text);
 write_text_file(fullfile(cfg.logs, 'spf_parser_log.txt'), spf_parser_log_text(spf));
 
-pretty_print(sprintf('Saved SPF cache: %s', cfg.spf.standardized_file), 'info');
+if strcmp(spf.meta.status, 'ok')
+    save_mat(cfg.spf.standardized_file, 'spf', spf);
+    pretty_print(sprintf('Saved SPF cache: %s', cfg.spf.standardized_file), 'info');
+else
+    remove_stale_cache(cfg.spf.standardized_file);
+    write_needed_from_user(cfg, spf);
+end
+
 zip_file = create_spf_bundle(cfg);
 pretty_print(sprintf('Created SPF parser bundle: %s', zip_file), 'info');
 mirror_spf_bundle(zip_file, cfg);
+
+if any(strcmp(spf.meta.status, {'missing_raw_dir', 'no_files', 'no_series', 'weak_bins'}))
+    error('S10_parse_spf:ParserNotReady', ...
+        ['SPF parser status is %s. See %s and %s. Cache was not saved. ' ...
+        'Bundle: %s'], spf.meta.status, fullfile(cfg.logs, 'spf_summary.txt'), ...
+        fullfile(cfg.logs, 'spf_parser_log.txt'), zip_file);
+end
 end
 
 function print_spf_summary(summary_text, spf)
@@ -81,6 +94,9 @@ lines{end + 1} = 'Series diagnostics:'; %#ok<AGROW>
 series = spf.series;
 if isempty(series)
     lines{end + 1} = '  none'; %#ok<AGROW>
+    lines{end + 1} = '  series_count: 0'; %#ok<AGROW>
+    lines{end + 1} = '  horizons: []'; %#ok<AGROW>
+    lines{end + 1} = '  typical_K: NaN'; %#ok<AGROW>
 else
     horizons = unique([series.horizon]);
     k = arrayfun(@(s) size(s.prob, 2), series);
@@ -129,14 +145,18 @@ timestamp = datestr(now, 'yyyymmdd_HHMMSS');
 zip_file = fullfile(cfg.bundles, ['SPF_PARSER_BUNDLE_', timestamp, '.zip']);
 
 files = {
-    fullfile('out', 'cache', 'spf_densities.mat')
     fullfile('out', 'logs', 'spf_summary.txt')
     fullfile('out', 'logs', 'spf_parser_log.txt')
+    fullfile('out', 'logs', 'NEEDED_FROM_USER.txt')
+    fullfile('config', 'default_config.m')
     fullfile('src', 'spf', 'parse_spf_densities.m')
     fullfile('scripts', 'S10_parse_spf.m')
     fullfile('src', 'utils', 'pit_from_hist.m')
     fullfile('tests', 'test_spf_parser.m')
     };
+if exist(cfg.spf.standardized_file, 'file') == 2
+    files = [{fullfile('out', 'cache', 'spf_densities.mat')}; files];
+end
 
 existing = {};
 for i = 1:numel(files)
@@ -175,4 +195,31 @@ end
 function name = get_filename(pathname)
 [~, base, ext] = fileparts(pathname);
 name = [base, ext];
+end
+
+function remove_stale_cache(filename)
+if exist(filename, 'file') == 2
+    delete(filename);
+end
+end
+
+function write_needed_from_user(cfg, spf)
+filename = fullfile(cfg.logs, 'NEEDED_FROM_USER.txt');
+lines = {
+    'SPF raw data are needed before the parser can create a standardized cache.'
+    ''
+    sprintf('Current parser status: %s', spf.meta.status)
+    sprintf('Expected raw directory: %s', fullfile(cfg.data_raw, 'spf'))
+    ''
+    'Please place SPF density forecast raw files under data/raw/spf/.'
+    'Supported file types: .csv, .txt, .dat, .xls, .xlsx, .mat.'
+    'Useful file/path keywords: spf, density, histogram, prob, bins, RGDP, GDPD, UNR.'
+    ''
+    'Alternatively set the environment variable SJ_SPF_RAW_DIR to a folder containing those files.'
+    'Example from a shell before launching MATLAB:'
+    '  export SJ_SPF_RAW_DIR=/path/to/spf/raw/files'
+    ''
+    'No empty spf_densities.mat cache was saved.'
+    };
+write_text_file(filename, strjoin(lines, newline));
 end

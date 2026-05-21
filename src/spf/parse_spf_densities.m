@@ -93,10 +93,21 @@ if isempty(series)
     spf.meta.todo = ['Raw files were found, but no density table matched the ' ...
         'parser heuristics. Check variable names for date, probability, and bin columns.'];
 else
-    spf.meta.status = 'ok';
+    if any(contains(string(spf.meta.warnings), 'WEAK_BINS'))
+        spf.meta.status = 'weak_bins';
+        spf.meta.todo = ['At least one parsed series used ordinal fallback bin ' ...
+            'edges. Provide raw files with numeric bin endpoints or probability column names.'];
+    else
+        spf.meta.status = 'ok';
+    end
     if any(arrayfun(@(s) all(isnan(s.realized)), series))
-        spf.meta.todo = ['Some series do not include realized values; supply ' ...
+        realized_todo = ['Some series do not include realized values; supply ' ...
             'realizations later before scoring/PIT steps.'];
+        if isempty(spf.meta.todo)
+            spf.meta.todo = realized_todo;
+        else
+            spf.meta.todo = [spf.meta.todo, ' ', realized_todo];
+        end
     end
 end
 end
@@ -707,7 +718,9 @@ elseif all(isfinite(tokens(:, 1))) && numel(prob_cols) > 1
     end
 else
     bin_edges = (0:numel(prob_cols))';
-    warnings{end + 1} = 'Bin labels do not contain numeric edges; using ordinal bin edges.';
+    warnings{end + 1} = sprintf(['WEAK_BINS: Bin labels do not contain numeric ' ...
+        'edges; using ordinal bin edges for probability columns: %s'], ...
+        strjoin(string(prob_cols), ', '));
 end
 end
 
