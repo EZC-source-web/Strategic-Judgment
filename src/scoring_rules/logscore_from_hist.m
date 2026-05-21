@@ -1,9 +1,10 @@
-function [log_score, density_at_y] = logscore_from_hist(bin_edges, prob, y, min_density)
+function [log_score, density_at_y, stats] = logscore_from_hist(bin_edges, prob, y, min_density)
 %LOGSCORE_FROM_HIST Log predictive density score from histogram probabilities.
 %
-% [log_score, density_at_y] = LOGSCORE_FROM_HIST(bin_edges, prob, y)
+% [log_score, density_at_y, stats] = LOGSCORE_FROM_HIST(bin_edges, prob, y)
 % evaluates the log density at realizations y when forecasts are represented
-% as histogram bin probabilities.
+% as histogram bin probabilities. The function is intentionally silent;
+% callers can log stats.
 %
 % Inputs
 %   bin_edges  Either K+1 edges or K-by-2 lower/upper endpoints.
@@ -19,6 +20,8 @@ if nargin < 4 || isempty(min_density)
     min_density = 1e-12;
 end
 
+stats = empty_stats();
+
 if isvector(bin_edges)
     edges = bin_edges(:);
     endpoints = [edges(1:(end - 1)), edges(2:end)];
@@ -27,11 +30,8 @@ else
 end
 
 if any(isinf(endpoints(:)))
-    [endpoints, sanitize_info] = sanitize_hist_bins(endpoints);
-    for j = 1:numel(sanitize_info.messages)
-        warning('logscore_from_hist:SanitizedOpenBins', '%s', ...
-            sanitize_info.messages{j});
-    end
+    stats.sanitized_open_bins = true;
+    endpoints = sanitize_hist_bins(endpoints);
 end
 
 lower = endpoints(:, 1);
@@ -88,16 +88,20 @@ for t = 1:numel(y)
 end
 
 if snapped_count > 0
-    warning('logscore_from_hist:SnappedRealizations', ...
-        'Snapped %d realizations to the implied histogram bin grid.', snapped_count);
+    stats.snapped_count = snapped_count;
 end
 if still_missing_count > 0
-    warning('logscore_from_hist:RealizationOutsideBins', ...
-        ['%d realizations remained outside histogram support or in bin gaps ' ...
-        'after snapping; returned NaN.'], still_missing_count);
+    stats.still_missing_count = still_missing_count;
 end
 
 log_score = log(density_at_y);
+end
+
+function stats = empty_stats()
+stats = struct();
+stats.sanitized_open_bins = false;
+stats.snapped_count = 0;
+stats.still_missing_count = 0;
 end
 
 function idx = find_bin_index(y, lower, upper)

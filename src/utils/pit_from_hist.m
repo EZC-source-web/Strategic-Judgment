@@ -1,8 +1,11 @@
-function pit = pit_from_hist(bin_edges, prob, y)
+function [pit, stats] = pit_from_hist(bin_edges, prob, y)
 %PIT_FROM_HIST Probability integral transform from histogram densities.
 %
-% pit = PIT_FROM_HIST(bin_edges, prob, y) computes CDF(y) for each row of a
-% histogram forecast. Within each bin, probability is spread uniformly.
+% [pit, stats] = PIT_FROM_HIST(bin_edges, prob, y) computes CDF(y) for each
+% row of a histogram forecast. Within each bin, probability is spread
+% uniformly. The function is intentionally silent; callers can log stats.
+
+stats = empty_stats();
 
 if isvector(bin_edges)
     edges = bin_edges(:);
@@ -12,11 +15,8 @@ else
 end
 
 if any(isinf(endpoints(:)))
-    [endpoints, sanitize_info] = sanitize_hist_bins(endpoints);
-    for j = 1:numel(sanitize_info.messages)
-        warning('pit_from_hist:SanitizedOpenBins', '%s', ...
-            sanitize_info.messages{j});
-    end
+    stats.sanitized_open_bins = true;
+    endpoints = sanitize_hist_bins(endpoints);
 end
 
 lower = endpoints(:, 1);
@@ -76,14 +76,18 @@ for t = 1:numel(y)
 end
 
 if snapped_count > 0
-    warning('pit_from_hist:SnappedRealizations', ...
-        'Snapped %d realizations to the implied histogram bin grid.', snapped_count);
+    stats.snapped_count = snapped_count;
 end
 if still_missing_count > 0
-    warning('pit_from_hist:RealizationOutsideBins', ...
-        ['%d realizations remained outside histogram support or in bin gaps ' ...
-        'after snapping; returned NaN.'], still_missing_count);
+    stats.still_missing_count = still_missing_count;
 end
+end
+
+function stats = empty_stats()
+stats = struct();
+stats.sanitized_open_bins = false;
+stats.snapped_count = 0;
+stats.still_missing_count = 0;
 end
 
 function idx = find_bin_index(y, lower, upper)

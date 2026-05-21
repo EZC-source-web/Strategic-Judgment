@@ -46,6 +46,9 @@ cfg.benchmarks.cache_file = fullfile(cfg.cache, 'benchmark_forecasts.mat');
 cfg.scores = struct();
 cfg.scores.cache_file = fullfile(cfg.cache, 'scores_pit.mat');
 
+cfg.report = struct();
+cfg.report.cache_file = fullfile(cfg.cache, 'report_scores_pit.mat');
+
 cfg.ss_tests = struct();
 cfg.ss_tests.cache_file = fullfile(cfg.cache, 'ss_starx_tests.mat');
 cfg.ss_tests.default_lags = 2;
