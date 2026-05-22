@@ -14,7 +14,8 @@ else
     endpoints = bin_edges(:, 1:2);
 end
 
-if any(isinf(endpoints(:)))
+open_ended = any(isinf(endpoints(:)));
+if open_ended
     stats.sanitized_open_bins = true;
     endpoints = sanitize_hist_bins(endpoints);
 end
@@ -55,11 +56,11 @@ for t = 1:numel(y)
     end
 
     y_eval = y(t);
-    idx = find_bin_index(y_eval, lower, upper);
+    idx = find_bin_index(y_eval, lower, upper, open_ended);
 
     if isempty(idx)
         y_snapped = snap_realized_to_bin_grid(y_eval, endpoints);
-        idx = find_bin_index(y_snapped, lower, upper);
+        idx = find_bin_index(y_snapped, lower, upper, open_ended);
         if ~isempty(idx)
             y_eval = y_snapped;
             snapped_count = snapped_count + 1;
@@ -90,8 +91,16 @@ stats.snapped_count = 0;
 stats.still_missing_count = 0;
 end
 
-function idx = find_bin_index(y, lower, upper)
+function idx = find_bin_index(y, lower, upper, open_ended)
 tol = 1e-8;
+if open_ended && y < lower(1) - tol
+    idx = 1;
+    return;
+end
+if open_ended && y > upper(end) + tol
+    idx = numel(upper);
+    return;
+end
 idx = find(y >= lower - tol & (y < upper | abs(y - upper) <= tol), 1, 'first');
 if isempty(idx) && y == upper(end)
     idx = numel(upper);

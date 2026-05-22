@@ -225,7 +225,7 @@ end
 
 function zip_file = create_report_bundle(cfg)
 timestamp = datestr(now, 'yyyymmdd_HHMMSS');
-zip_file = fullfile(cfg.bundles, ['SPF_REPORT_BUNDLE_', timestamp, '.zip']);
+zip_file = fullfile(cfg.bundles, ['SPF_REPORT_BUNDLE2_', timestamp, '.zip']);
 
 files = {
     fullfile('out', 'cache', 'report_scores_pit.mat')
