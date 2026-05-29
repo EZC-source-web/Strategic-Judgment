@@ -42,6 +42,10 @@ cfg.fred.raw_dir = fullfile(cfg.data_raw, 'fred');
 
 cfg.benchmarks = struct();
 cfg.benchmarks.cache_file = fullfile(cfg.cache, 'benchmark_forecasts.mat');
+cfg.benchmarks.B = 2000;
+cfg.benchmarks.p = 2;
+cfg.benchmarks.seed = 1701;
+cfg.benchmarks.min_obs = 24;
 
 cfg.scores = struct();
 cfg.scores.cache_file = fullfile(cfg.cache, 'scores_pit.mat');
