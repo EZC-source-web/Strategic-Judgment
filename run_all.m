@@ -27,6 +27,8 @@ steps = {
     'S17_bins_diagnostics'
     'S20_build_benchmark'
     'S30_compute_scores_pit'
+    'S31_compute_benchmark_scores'
+    'S32_compute_wedge'
     'S40_run_ss_tests'
     'S90_export_outputs'
     };

@@ -327,7 +327,7 @@ for k = 1:K
 end
 
 total = sum(prob);
-if total > 0 && abs(total - 1) > 1e-8
+if total > 0 && abs(total - 1) > 1e-6
     prob = prob ./ total;
     was_renorm = true;
 end

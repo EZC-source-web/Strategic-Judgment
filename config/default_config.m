@@ -46,12 +46,16 @@ cfg.benchmarks.B = 2000;
 cfg.benchmarks.p = 2;
 cfg.benchmarks.seed = 1701;
 cfg.benchmarks.min_obs = 24;
+cfg.benchmarks.scores_file = fullfile(cfg.cache, 'benchmark_scores_pit.mat');
 
 cfg.scores = struct();
 cfg.scores.cache_file = fullfile(cfg.cache, 'scores_pit.mat');
 
 cfg.report = struct();
 cfg.report.cache_file = fullfile(cfg.cache, 'report_scores_pit.mat');
+
+cfg.wedge = struct();
+cfg.wedge.cache_file = fullfile(cfg.cache, 'wedge_scores_pit.mat');
 
 cfg.ss_tests = struct();
 cfg.ss_tests.cache_file = fullfile(cfg.cache, 'ss_starx_tests.mat');
